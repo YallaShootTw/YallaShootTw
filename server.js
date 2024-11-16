@@ -2,52 +2,26 @@ const express = require('express');
 const puppeteer = require('puppeteer');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
 let browser;
 
-// إعداد المتصفح عند بدء الخادم
 (async () => {
-    try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--window-size=800,600',
-                '--disk-cache-size=0',
-                '--disable-cache',
-                '--disable-extensions',
-                '--disable-background-timer-throttling',
-                '--disable-backgrounding-occluded-windows',
-                '--disable-renderer-backgrounding',
-                '--enable-features=NetworkService,NetworkServiceInProcess',
-            ],
-        });
-        console.log('Browser launched successfully');
-    } catch (error) {
-        console.error('Failed to launch browser:', error);
-        process.exit(1); // إنهاء العملية إذا لم يتمكن من إطلاق المتصفح
-    }
+    browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
 })();
 
 // وظيفة استخراج رابط الصورة مع إعادة المحاولة
 async function extractImage(url, retries = 2) {
-    if (!browser) {
-        console.error('Browser is not available');
-        return null;
-    }
+    const page = await browser.newPage();
 
-    let page;
     try {
-        page = await browser.newPage();
-
         // اعتراض الطلبات لتعطيل التحميلات غير الضرورية
         await page.setRequestInterception(true);
         page.on('request', (req) => {
-            if (['image', 'stylesheet', 'font', 'media', 'script'].includes(req.resourceType())) {
+            if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
                 req.abort();
             } else {
                 req.continue();
@@ -55,10 +29,10 @@ async function extractImage(url, retries = 2) {
         });
 
         // الذهاب إلى رابط الموقع
-        await page.goto('https://savetwitter.net/en', { waitUntil: 'domcontentloaded', timeout: 10000 });
+        await page.goto('https://savetwitter.net/en', { waitUntil: 'domcontentloaded' });
 
         // إدخال الرابط في الحقل
-        await page.type('#s_input', url, { delay: 100 });
+        await page.type('#s_input', url);
 
         // الضغط على زر "Download"
         await page.click('button.btn-red');
@@ -67,10 +41,10 @@ async function extractImage(url, retries = 2) {
         await page.waitForFunction(() => {
             const message = document.querySelector('div.message');
             return !message || message.style.display === 'none';
-        }, { timeout: 20000 });
+        }, { timeout: 15000 });
 
         // الانتظار حتى تظهر الصورة
-        await page.waitForSelector('div.image-tw.open-popup img', { timeout: 15000 });
+        await page.waitForSelector('div.image-tw.open-popup img', { timeout: 10000 });
 
         // استخراج رابط الصورة
         const imageUrl = await page.$eval('div.image-tw.open-popup img', img => img.src);
@@ -85,9 +59,7 @@ async function extractImage(url, retries = 2) {
         }
         return null;
     } finally {
-        if (page) {
-            await page.close();
-        }
+        await page.close();
     }
 }
 
@@ -101,17 +73,12 @@ app.get('/extract-image', async (req, res) => {
 
     console.log(`Received request to extract image for: ${url}`);
 
-    try {
-        let imageUrl = await extractImage(url);
+    let imageUrl = await extractImage(url);
 
-        if (imageUrl) {
-            res.send(`<a href="${imageUrl}">${imageUrl}</a>`);
-        } else {
-            res.status(500).send('Failed to extract image after multiple attempts');
-        }
-    } catch (error) {
-        console.error('Unexpected error:', error);
-        res.status(500).send('An unexpected error occurred');
+    if (imageUrl) {
+        res.send(`<a href="${imageUrl}">${imageUrl}</a>`);
+    } else {
+        res.status(500).send('Failed to extract image after multiple attempts');
     }
 });
 
