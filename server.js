@@ -35,6 +35,11 @@ let browser;
 
 // وظيفة استخراج رابط الصورة مع إعادة المحاولة
 async function extractImage(url, retries = 2) {
+    if (!browser) {
+        console.error('Browser is not available');
+        return null;
+    }
+
     let page;
     try {
         page = await browser.newPage();
