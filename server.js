@@ -1,27 +1,43 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+const chromium = require('chrome-aws-lambda');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 let browser;
 
+// إعداد المتصفح عند بدء الخادم
 (async () => {
-    browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    try {
+        browser = await chromium.puppeteer.launch({
+            args: chromium.args,
+            defaultViewport: chromium.defaultViewport,
+            executablePath: await chromium.executablePath,
+            headless: chromium.headless,
+        });
+        console.log('Browser launched successfully');
+    } catch (error) {
+        console.error('Failed to launch browser:', error);
+        process.exit(1); // إنهاء العملية إذا لم يتمكن من إطلاق المتصفح
+    }
 })();
 
 // وظيفة استخراج رابط الصورة مع إعادة المحاولة
 async function extractImage(url, retries = 2) {
-    const page = await browser.newPage();
+    if (!browser) {
+        console.error('Browser is not available');
+        return null;
+    }
 
+    let page;
     try {
+        page = await browser.newPage();
+
         // اعتراض الطلبات لتعطيل التحميلات غير الضرورية
         await page.setRequestInterception(true);
         page.on('request', (req) => {
-            if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
+            if (['image', 'stylesheet', 'font', 'media', 'script'].includes(req.resourceType())) {
                 req.abort();
             } else {
                 req.continue();
@@ -29,10 +45,10 @@ async function extractImage(url, retries = 2) {
         });
 
         // الذهاب إلى رابط الموقع
-        await page.goto('https://savetwitter.net/en', { waitUntil: 'domcontentloaded' });
+        await page.goto('https://savetwitter.net/en', { waitUntil: 'domcontentloaded', timeout: 10000 });
 
         // إدخال الرابط في الحقل
-        await page.type('#s_input', url);
+        await page.type('#s_input', url, { delay: 100 });
 
         // الضغط على زر "Download"
         await page.click('button.btn-red');
@@ -41,10 +57,10 @@ async function extractImage(url, retries = 2) {
         await page.waitForFunction(() => {
             const message = document.querySelector('div.message');
             return !message || message.style.display === 'none';
-        }, { timeout: 15000 });
+        }, { timeout: 20000 });
 
         // الانتظار حتى تظهر الصورة
-        await page.waitForSelector('div.image-tw.open-popup img', { timeout: 10000 });
+        await page.waitForSelector('div.image-tw.open-popup img', { timeout: 15000 });
 
         // استخراج رابط الصورة
         const imageUrl = await page.$eval('div.image-tw.open-popup img', img => img.src);
@@ -59,7 +75,9 @@ async function extractImage(url, retries = 2) {
         }
         return null;
     } finally {
-        await page.close();
+        if (page) {
+            await page.close();
+        }
     }
 }
 
@@ -73,12 +91,17 @@ app.get('/extract-image', async (req, res) => {
 
     console.log(`Received request to extract image for: ${url}`);
 
-    let imageUrl = await extractImage(url);
+    try {
+        let imageUrl = await extractImage(url);
 
-    if (imageUrl) {
-        res.send(`<a href="${imageUrl}">${imageUrl}</a>`);
-    } else {
-        res.status(500).send('Failed to extract image after multiple attempts');
+        if (imageUrl) {
+            res.send(`<a href="${imageUrl}">${imageUrl}</a>`);
+        } else {
+            res.status(500).send('Failed to extract image after multiple attempts');
+        }
+    } catch (error) {
+        console.error('Unexpected error:', error);
+        res.status(500).send('An unexpected error occurred');
     }
 });
 
